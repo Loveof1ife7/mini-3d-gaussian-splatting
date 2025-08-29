@@ -1,10 +1,31 @@
-from abc import ABC, abstractmethod
+
+
+from __future__ import annotations
+
+
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Tuple, Optional, Union, Any
+from pathlib import Path
+
+
+import math
+import random
+import json
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-from pathlib import Path
+import torch.nn.functional as F
+import os   
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover
+    Image = None 
 
 # =============================================================================
 # config/config.py - 配置管理
@@ -51,17 +72,27 @@ class ConfigManager:
     @staticmethod
     def load_from_yaml(config_path: str) -> TrainingConfig:
         """从YAML文件加载配置"""
-        pass
-    
+        if yaml is None:
+            raise ImportError("PyYAML is not installed. pip install pyyaml")
+        else:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            return TrainingConfig(**data)
+                
     @staticmethod
     def save_to_yaml(config: TrainingConfig, config_path: str) -> None:
         """保存配置到YAML文件"""
-        pass
+        if yaml is None:
+            raise ImportError("PyYAML not installed. pip install pyyaml")
+        Path(config_path).parent.mkdir(parents=True, exist_ok=True)
+    
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump({k: getattr(config, k) for k in config.__dataclass_fields__.keys()}, f, allow_unicode=True)
     
     @staticmethod
     def get_default_config() -> TrainingConfig:
         """获取默认配置"""
-        pass
+        return TrainingConfig()
 
 cfg = TrainingConfig(batch_size=64)
 print(cfg)
