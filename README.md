@@ -1,5 +1,7 @@
 # mini-3dgs
 
+Reproduce a minimal implementation of 3D Gaussian Splatting (3DGS) using the least amount of code while maintaining a clear and well-defined structure
+
 ## Architecture
 
 ```text
