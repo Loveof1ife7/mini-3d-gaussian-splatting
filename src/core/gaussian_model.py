@@ -121,6 +121,11 @@ class GaussianModel(nn.Module):
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
     
+    @property
+    def get_covariance(self):
+        S = self.get_scaling
+        R = MathUtils.build_rotation_matrix(self._get_rotation)
+        return MathUtils.build_covariance_3d(S, R)
     # ------------------------------ 模型操作 ------------------------------
     @torch.no_grad()
     def density_and_split(self, grad_threshold: float, scene_extent: float) -> None:

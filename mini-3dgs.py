@@ -662,7 +662,6 @@ class DensityController:
 
 class GaussianOptimizer:
     """3DGS优化器包装类"""
-
     def __init__(self, gaussians: GaussianModel, config: TrainingConfig):
         self.gaussians = gaussians
         self.config = config
