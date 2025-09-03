@@ -21,20 +21,18 @@ class RenderSettings:
 
 class GaussianRenderer:
     """3D高斯可微分渲染器"""
-    
-    def __init__(self):
+    def __init__(self, tile_size=16, radius_min=0.01, radius_max=50.0):
+        self.tile_size = tile_size
+        self.radius_min = radius_min   
+        self.radius_max = radius_max
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.radius_min = 0.01   
-        self.radius_max = 30.0   
-        self.tile_size = 16
-    
+        
+
     def render(self,
                camera: Camera,
                gaussians: GaussianModel,
                settings: RenderSettings
             ) -> Dict[str, torch.Tensor]:
-        pass
-    
         """
         主渲染方法
         
@@ -63,7 +61,7 @@ class GaussianRenderer:
         bg = settings.bg_color.to(device).view(3, 1, 1)
         
         # 1. 投影3D高斯到2D
-        proj = self._project_gaussians_3d_to_2d(camera, gaussians, settings)
+        proj = self._project_gaussians_3d_to_2d(camera, gaussians)
         means2D = proj["means2D"]          # [N,2]
         cov2D   = proj["cov2D"]            # [N,2,2]
         depths  = proj["depths"]           # [N]  (相机坐标 Z，>0 表示在前)
@@ -76,8 +74,8 @@ class GaussianRenderer:
         if vis_mask.sum() == 0:
             return {
                 "image": bg.repeat(1, H, W),
-                "alpha": torch.zeros(1, H, W, device),
-                "depth": torch.zeros(1, H, W, device),
+                "alpha": torch.zeros((1, H, W), device=device, dtype=torch.float32),
+                "depth": torch.zeros((1, H, W), device=device, dtype=torch.float32),
                 "viewspace_points": means2D,
                 "visibility_filter": vis_mask,
                 "radii": radii,
@@ -87,13 +85,13 @@ class GaussianRenderer:
         # 3. 深度排序
         sorted_indices = self._sort_gaussians_by_depth(vis_mask, depths)
         
-        feats = gaussians.get_features()
+        feats = gaussians.get_features
         if feats.dim() == 3 and feats.shape[1] >=1 :
             colors = torch.sigmoid(feats[:, 0, :]) # [N, 3]
         else:
             colors = torch.sigmoid(gaussians._features_dc.squeeze(1)) # [N, 3]
         
-        opacities = gaussians.get_opacity().squeeze(1)
+        opacities = gaussians.get_opacity.squeeze(1)
         
         # 4.5. 瓦片光栅化
         render_results = self._tile_rasterization(
@@ -136,16 +134,17 @@ class GaussianRenderer:
         device = gaussians.get_xyz.device
         Xw = gaussians.get_xyz # [N,3]
         N = Xw.shape[0]
+        dtype = Xw.dtype
         
         # intrinsics 
         W = camera._width
         H = camera._height
-        fx = torch.as_tensor(0.5 * W / math.tan(camera._FoVx * 0.5), dtype=X.dtype, device=device)
-        fy = torch.as_tensor(0.5 * H / math.tan(camera._FoVy * 0.5), dtype=X.dtype, device=device)
+        fx = torch.as_tensor(0.5 * W / math.tan(camera._FoVx * 0.5), dtype=dtype, device=device)
+        fy = torch.as_tensor(0.5 * H / math.tan(camera._FoVy * 0.5), dtype=dtype, device=device)
         
         # center of image plane (W/2 ,H/2)
-        cx = torch.as_tensor(W * 0.5, dtype=X.dtype, device=device) 
-        cy = torch.as_tensor(H * 0.5, dtype=X.dtype, device=device) 
+        cx = torch.as_tensor(W * 0.5, dtype=dtype, device=device) 
+        cy = torch.as_tensor(H * 0.5, dtype=dtype, device=device) 
         
         # world -> camera
         WV = camera.world_view_transform().to(device) # [4,4]
@@ -157,22 +156,22 @@ class GaussianRenderer:
         # X, Y, Z: 相机坐标系下的点坐标
         #   - 单位：米（或者你的世界单位）
         #   - Z > 0 表示在相机前方，一般 [0.01 ~ +∞)
-        X, Y, Z = Xc[:, 0], Xc[:, 1], Xc[:, 2].clamp(min=1e-6)
+        X, Y, Z = Xc[:, 0], Xc[:, 1], Xc[:, 2]
         
         xpix = fx * X / Z + cx
         ypix = - fy * Y / Z + cy
         means2D = torch.stack([xpix, ypix], dim=-1)  # [N,2]
         
         # 3D Covariance Matrix -> 2D
-        cov3d = gaussians.get_covariance() # [N, 3 ,3]
+        cov3d = gaussians.get_covariance # [N, 3 ,3]
         # cov_cam = Rv Σ Rv^T
         cov_cam = Rv @ cov3d @ Rv.T # pytorch broadcaset Rv to [N, 3, 3]
         
         # Jacobian of projection transformation (X,Y,Z) -> (x,y), [2, 3]
-        J = torch.zeros((2, 3), dtype=X.dtype, device=device)
+        J = torch.zeros((N, 2, 3), dtype=dtype, device=device)
         invZ = 1.0 / Z
         invZ2 = invZ * invZ
-        J[0, 0] = fx * invZ
+        J[:, 0, 0] = fx * invZ
         J[:, 0, 2] = -fx * X * invZ * invZ
         J[:, 1, 1] = -fy * invZ     
         J[:, 1, 2] =  fy * Y * invZ * invZ
@@ -180,7 +179,7 @@ class GaussianRenderer:
         cov2d = J @ cov_cam @ J.transpose(-1, -2) # [N, 2, 2]
         
         # 数值稳定
-        eps = torch.eye(2, device=X.device, dtype=X.dtype).unsqueeze(0).expand(N, 2, 2) * 1e-6
+        eps = torch.eye(2, device=X.device, dtype=dtype).unsqueeze(0).expand(N, 2, 2) * 1e-6
         cov2d = cov2d + eps
         
         # conic Q = cov2d^{-1}
@@ -226,10 +225,6 @@ class GaussianRenderer:
         """
         步骤3: 按深度排序
         """ 
-        visibility_filter = visibility_filter.squeeze(-1) # [N, 1] -> [N]  
-        
-        depths = depths.squeeze(-1)
-        
         #  visibility_filter: [T,F,T,T,F,T],
         #  depths: [2.5,0.3,4.1,1.2,7.7,1.2]
         
@@ -250,7 +245,7 @@ class GaussianRenderer:
                             opacities: torch.Tensor,
                             bg: torch.Tensor,
                             settings: RenderSettings
-                            ) -> torch.Tensor:
+                            ) -> Dict[str, torch.Tensor]:
         
         """
         步骤4-5: 瓦片光栅化和Alpha混合
@@ -278,11 +273,10 @@ class GaussianRenderer:
         out_rgb = bg.expand(3, H, W).clone()
         out_a   = torch.zeros(1, H, W, device=device)
         out_d   = torch.zeros(1, H, W, device=device)
-
+        # --- 建桶：把每个高斯分配到可能覆盖的 tile ---
         for i in sorted_indices.tolist():
             r = int(radii[i].item())
-            if r <= 0:
-                continue
+    
             cx, cy = means2D[i]
             
             # gaussian's AABB in the image plane
@@ -302,55 +296,70 @@ class GaussianRenderer:
                 for tx in range(tx0, tx1 + 1):
                     tid = ty * tiles_x + tx
                     tile_lists[tid].append(i)
-            
-            # front-to-back alpha blending
-            for ty in range(tiles_y):
-                for tx in range(tiles_x):
-                    tid = ty * tiles_x + tx
-                    lst = tile_lists[tid]
                     
-                    # tile's pixel range
-                    x0 = tx * T
-                    x1 = min(x0 + T, W)
-                    y0 = ty * T
-                    y1 = min(y0 + T, H)
-                    
-                    for yy in range(y0, y1):
-                        for xx in range(x0, x1):
-                            a_acc = out_a[0, yy, xx]
-                            if a_acc >= 0.995:
+        # --- 遍历 tile / 像素并前到后混合 ---
+        # front-to-back alpha blending
+        for ty in range(tiles_y):
+            for tx in range(tiles_x):
+                tid = ty * tiles_x + tx
+                lst = tile_lists[tid]
+                
+                # tile's pixel range
+                x0 = tx * T
+                x1 = min(x0 + T, W)
+                y0 = ty * T
+                y1 = min(y0 + T, H)
+                
+                for yy in range(y0, y1):
+                    for xx in range(x0, x1):
+                        a_acc = out_a[0, yy, xx]
+                        if a_acc >= 0.995:
+                            continue
+                        
+                        for i in lst:
+                            # 计算二次型 s = (p-u).transpose * Q * (p-u)
+                            
+                            # Tenosr Version
+                            # Q = conics[i] # [2,2]
+                            # p = torch.tensor([xx, yy], device=device).float()
+                            # cx, cy = means2D[i]
+                            # u = torch.tensor([cx, cy], device=device).float()
+                            # s = (p - u).transpose(-1, -2) @ Q @ (p - u)
+                            
+                            # Scalar Version
+                            dx = xx - means2D[i, 0] 
+                            dy = yy - means2D[i, 1]
+                            Q = conics [i] 
+                            s = dx * dx * Q[0, 0] + (Q[0, 1] + Q[1, 0]) * dx * dy + dy * dy * Q[1, 1]
+                            w = torch.exp(-0.5 * s).clamp(0.0, 1.0)
+                            
+                            if w < 1e-5:
+                                continue    
+                                
+                            a_i = (opacities[i] * w).clamp(0.0, 1.0)
+                            if a_i <= 0.0:
                                 continue
                             
-                            for i in lst:
-                                # 计算二次型 s = (p-u).transpose * Q * (p-u)
-                                Q = conics[i] # [2,2]
-                                p = torch.tensor([xx, yy], device=device).float()
-                                cx, cy = means2D[i]
-                                u = torch.tensor([cx, cy], device=device).float()
-                                s = (p - u).transpose(-1, -2) @ Q @ (p - u)
-                                
-                                w = torch.exp(-0.5 * s).clamp(0.0, 1.0)
-                                if w < 1e-5:
-                                    continue    
-                                 
-                                a_i = (opacities[i] * w).clamp(0.0, 1.0)
-                                if a_i <= 0.0:
-                                    continue
-                                
-                                trans = 1.0 - a_acc
-                                contrib = trans * a_i
-                                if contrib <= 0.0:
-                                    continue
-                                
-                                out_rgb[:, yy, xx] += contrib * colors[i].view(3)
-                                a_acc = a_acc + contrib
-                                out_d[0, yy, xx] += contrib * depths[i]
-                                
-                                if a_acc >= 0.995:
-                                    break
-                                
-                                out_a[0, yy, xx] = a_acc
+                            trans = 1.0 - a_acc
+                            contrib = trans * a_i
+                            if contrib <= 0.0:
+                                continue
+                            
+                            out_rgb[:, yy, xx] += contrib * colors[i].view(3)
+                            a_acc = a_acc + contrib
+                            out_d[0, yy, xx] += contrib * depths[i]
+                            
+                            if a_acc >= 0.995:
+                                break
+                            
+                        out_a[0, yy, xx] = a_acc
+                        
+        # ---- 背景合成 + 深度归一化 ----
+        # C = 前景贡献 + (1 - A) * bg
+        out_rgb = out_rgb + (1.0 - out_a) * bg
 
+        # 期望深度：除以 alpha；alpha=0 的像素保持 0（或根据需要设为某个背景深度）
+        out_d = out_d / (out_a + 1e-6)
         return {
             "image": out_rgb.clamp(0, 1),
             "alpha": out_a.clamp(0, 1),

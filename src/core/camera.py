@@ -20,8 +20,8 @@ class Camera:
         
         Args:
             uid: 相机ID
-            R: 旋转矩阵 [3, 3]
-            T: 平移向量 [3]
+            R: np.ndarray,               # R_cw: camera->world 旋转 (3,3)
+            T: np.ndarray,               # C_w : 相机中心 in world  (3,) / (3,1)
             FoVx: X方向视场角
             FoVy: Y方向视场角
             image: 图像张量 [3, H, W]
@@ -46,7 +46,7 @@ class Camera:
     def world_view_transform(self) -> torch.Tensor:
         """世界到视图变换矩阵"""
         if self._wv is None:
-            self._wv = CameraUtils.build_world_view_matrix(self._R.cpu().numpy, self._T.cpu().numpy)
+            self._wv = CameraUtils.build_world_view_matrix(self._R.cpu().numpy, self._T.cpu().numpy, True)
         return self._wv
     
     @property
@@ -70,19 +70,75 @@ class Camera:
 class CameraUtils:
     """相机工具类"""
     
-    @staticmethod
-    def build_world_view_matrix(R: np.ndarray, T: np.ndarray) -> torch.Tensor:
-        """构建世界到视图变换矩阵"""
+    import torch
+import numpy as np
 
-        assert R.shape == (3, 3), f"R should be [3,3], got {R.shape}"
-        assert T.shape == (3, 1), f"T should be [3,1], got {T.shape}"
-        
-        # 构建4x4视图矩阵
-        view_matrix = torch.eye(4, dtype=R.dtype)
-        view_matrix[:3, :3] = R.t()  # 旋转部分取转置
-        view_matrix[:3, 3] = (-R.t() @ T).flatten()  # 平移部分
-        
-        return view_matrix
+class CameraUtils:
+    """相机工具类"""
+
+    @staticmethod
+    def build_world_view_matrix(
+        R_np: np.ndarray,
+        T_np: np.ndarray,
+        from_c2w: bool,          # True: 传入 C2W；False: 传入 W2C
+        device=None,
+        dtype=None,
+    ) -> torch.Tensor:
+        """
+        构建世界→相机（W2C）视图矩阵 view，使得齐次坐标满足：
+            [X_c; 1] = view @ [X_w; 1]，其中  X_c = R_wc X_w + t_wc
+
+        记号定义（非常重要）：
+          - R_cw（camera→world 的旋转）：
+                X_w = R_cw X_c
+            含义：把“相机坐标系中的向量”表示到“世界坐标系”。
+            列向量语义：R_cw 的三列 = 相机基 {x_c, y_c, z_c} 在世界系下的方向。
+
+          - R_wc（world→camera 的旋转）：
+                X_c = R_wc X_w
+            含义：把“世界坐标系中的向量”表示到“相机坐标系”。
+            列向量语义：R_wc 的三列 = 世界基 {x_w, y_w, z_w} 在相机系下的方向。
+
+          - 关系（正交旋转）：
+                R_wc = R_cw^T     且     R_cw = R_wc^T
+
+        参数：
+          - R_np: (3,3)
+          - T_np: (3,) 或 (3,1)
+          - from_c2w:
+              True  : 输入是 C2W（X_w = R_cw X_c + C_w，其中 T_np = C_w 为相机中心在世界系）
+                      输出 view 满足 X_c = R_cw^T X_w - R_cw^T C_w
+                        即  R_wc = R_cw^T,  t_wc = -R_cw^T C_w
+              False : 输入是 W2C（X_c = R_wc X_w + t_wc，其中 T_np = t_wc）
+                      直接拼接为 view
+
+        返回：
+          - view: (4,4) 的 W2C 矩阵
+        """
+        assert R_np.shape == (3, 3), f"R should be [3,3], got {R_np.shape}"
+        T_np = T_np.reshape(3, 1)
+
+        R = torch.from_numpy(R_np)
+        T = torch.from_numpy(T_np)
+        if dtype is not None:
+            R = R.to(dtype); T = T.to(dtype)
+        if device is not None:
+            R = R.to(device); T = T.to(device)
+
+        view = torch.eye(4, device=R.device, dtype=R.dtype)
+
+        if from_c2w:
+            # 输入是 C2W：X_w = R_cw X_c + C_w
+            R_wc = R.transpose(0, 1)          # R_cw^T
+            t_wc = -(R_wc @ T).flatten()       # -R_cw^T C_w
+        else:
+            # 输入是 W2C：X_c = R_wc X_w + t_wc
+            R_wc = R
+            t_wc = T.flatten()
+
+        view[:3, :3] = R_wc
+        view[:3, 3]  = t_wc
+        return view
     @staticmethod
     def build_projection_matrix(znear: float, zfar: float, 
                                   fovX: float, fovY: float) -> torch.Tensor:
